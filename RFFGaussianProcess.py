@@ -57,16 +57,13 @@ class RFFGaussianProcess1D:
         # build design matrix Phi
         self.Phi = self._phi(X)   # shape (N, 2Ns)
 
-        # posterior covariance: (Phi^T Phi + sigma^2 I)
-        A = self.Phi.T @ self.Phi + self.noise_var * np.eye(self.Phi.shape[1])
+        # posterior covariance matrix
+        self.Sigma = np.linalg.inv(self.Phi.T @ self.Phi + self.noise_var * np.eye(self.Phi.shape[1])) * self.noise_var
 
         # posterior mean
-        self.mu = np.linalg.solve(A, self.Phi.T @ y)
+        self.mu = (1 / self.noise_var) * self.Sigma @ self.Phi.T @ y
 
-        # store inverse covariance if needed
-        self.Sigma = self.noise_var * np.linalg.inv(A)
-
-    def predict(self, X_test, return_variance=True):
+    def predict(self, X_test):
         """
         Predict mean and variance
         """
@@ -74,18 +71,9 @@ class RFFGaussianProcess1D:
         Phi_star = self._phi(X_test)
 
         # predictive mean
-        mean = Phi_star @ self.mu
+        pred_mean = Phi_star @ self.mu
 
-        if not return_variance:
-            return mean
+        # predictive variance
+        pred_cov = Phi_star @  self.Sigma @ Phi_star.T + np.eye(len(X_test)) * self.noise_var
 
-        # predictive variance: phi^T A^{-1} phi + sigma^2
-        A = self.Phi.T @ self.Phi + self.noise_var * np.eye(self.Phi.shape[1])
-
-        # solve A v = phi_*^T (for each test point)
-        var = []
-        for i in range(Phi_star.shape[0]):
-            v = np.linalg.solve(A, Phi_star[i])
-            var.append(Phi_star[i] @ v + self.noise_var)
-
-        return mean, np.array(var)
+        return pred_mean, np.diag(pred_cov)
