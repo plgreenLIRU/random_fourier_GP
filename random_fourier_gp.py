@@ -1,7 +1,7 @@
 import numpy as np
 
-class RFFGaussianProcess1D:
-    def __init__(self, n_features=100, lengthscale=1.0, noise_var=1e-2, seed=None):
+class RFFGP:
+    def __init__(self, input_dim, n_features=100, lengthscale=1.0, noise_var=1e-2, seed=None):
         """
         Random Fourier Feature GP (Bayesian linear regression view)
 
@@ -10,10 +10,10 @@ class RFFGaussianProcess1D:
         - lengthscale: l in beta = l^{-2}
         - noise_var: sigma^2
         """
+        self.input_dim = input_dim
         self.n_features = n_features
         self.lengthscale = lengthscale
         self.noise_var = noise_var
-
         self.rng = np.random.default_rng(seed)
 
         # spectral density: w ~ N(0, beta), beta = l^{-2}
@@ -26,30 +26,41 @@ class RFFGaussianProcess1D:
         self.Phi = None
 
     def _sample_features(self):
-        # 1D frequencies
-        self.w = self.rng.normal(loc=0.0, scale=np.sqrt(self.beta), size=self.n_features)
+        self.w = np.random.normal(0, np.sqrt(self.beta), size=(self.n_features, self.input_dim))
 
-    def _phi(self, x):
+    def _phi(self, X):
         """
-        Compute RFF feature vector for 1D input x
-        shape: (2 * n_features,)
+        Compute RFF feature matrix for multidimensional inputs.
+
+        Parameters
+        ----------
+        X : array, shape (N, D)
+
+        Returns
+        -------
+        Phi : array, shape (N, 2 * n_features)
         """
-        x = np.atleast_1d(x)
+        X = np.atleast_2d(X)   # (N, D)
 
-        cos_part = np.cos(np.outer(x, self.w))   # (N, Ns)
-        sin_part = np.sin(np.outer(x, self.w))   # (N, Ns)
+        # projections: (N, Ns)
+        proj = X @ self.w.T
 
-        # concatenate cos and sin features
+        cos_part = np.cos(proj)
+        sin_part = np.sin(proj)
+
         return np.hstack([cos_part, sin_part]) * np.sqrt(1.0 / self.n_features)
 
     def train(self, X, y):
         """
         Fit Bayesian linear regression in feature space
         """
-        X = np.asarray(X).ravel()
-        y = np.asarray(y).ravel()
-
+        
+        X = np.asarray(X)
+        if X.ndim == 1:
+            X = X[:, None]
         self.X_train = X
+        
+        y = np.asarray(y).ravel()
 
         # sample random features
         self._sample_features()
@@ -65,15 +76,35 @@ class RFFGaussianProcess1D:
 
     def predict(self, X_test):
         """
-        Predict mean and variance
+        Predict posterior mean and variance
+
+        Parameters
+        ----------
+        X_test : array, shape (N, D)
+
+        Returns
+        -------
+        pred_mean : shape (N,)
+        pred_var : shape (N,)
         """
-        X_test = np.asarray(X_test).ravel()
-        Phi_star = self._phi(X_test)
+        X_test = np.asarray(X_test)
+
+        # ensure shape (N, D)
+        if X_test.ndim == 1:
+            X_test = X_test[:, None]
+
+        Phi_star = self._phi(X_test)   # (N, 2Ns)
 
         # predictive mean
         pred_mean = Phi_star @ self.mu
 
         # predictive variance
-        pred_cov = Phi_star @  self.Sigma @ Phi_star.T + np.eye(len(X_test)) * self.noise_var
+        #
+        # diag(Phi Sigma Phi^T)
+        #
+        pred_var = np.sum(
+            (Phi_star @ self.Sigma) * Phi_star,
+            axis=1
+        ) + self.noise_var
 
-        return pred_mean, np.diag(pred_cov)
+        return pred_mean, pred_var
